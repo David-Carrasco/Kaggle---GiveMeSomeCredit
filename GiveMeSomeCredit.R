@@ -2,7 +2,9 @@
 
 library(ggplot2)
 library(nortest)
+library(modeest)
 library(dplyr)
+library(plyr)
 
 ########################################
 #####   DECLARACION  FUNCIONES    ######
@@ -70,80 +72,121 @@ pr.out$rotation[,1:4]
 #########################################################################
 
 #MonthlyIncome
-#Filtramos dataset quitando los NA de income en esta feature
+#Filtramos dataset quitando los NA en esta feature
 income.no.nas <- train.data[!is.na(train.data$MonthlyIncome),]
 income.nas <- train.data[is.na(train.data$MonthlyIncome),]
 
 
+fill.MonthlyIncome <- function(row){
+  
+  #Filtro income.no.nas con los valores de la fila actual
+  filter.row <- income.no.nas[income.no.nas$age == row$age &
+                              income.no.nas$NumberOfOpenCreditLinesAndLoans == row$NumberOfOpenCreditLinesAndLoans &
+                              income.no.nas$NumberRealEstateLoansOrLines == row$NumberRealEstateLoansOrLines,]
+  
+  #En el caso que el filtro no nos de ningun resultado previo, 
+  #filtraremos solo con age que es el valor mas correlado acorde al analisis PCA realizado
+  if(length(filter.row$MonthlyIncome) == 0){
+    filter.row <- income.no.nas[income.no.nas$age == row$age,]
+  }
+  
+  #Filtro lillie.test necesita una muestra mayor que 4
+  #Si hay menos datos, insertamos la mediana para rellenar el NA
+  
+  #Aquellos valores que no hayan sido filtrados por no existir ejemplos previos
+  #(EJ: Hay un NA para una mujer de 107 años y no hay ejemplos para rellenarlo)
+  #se trataran despues uno a uno
+  
+  #Pasamos test de normalidad (Confianza de un 0.5)
+  #   SI --> Rellenamos con la media
+  #   NO --> Rellenamos con la mediana
+  if(length(filter.row$MonthlyIncome) > 4){
+    fill.data <- round(ifelse(lillie.test(filter.row$MonthlyIncome)$p.value > 0.05, 
+                             mean(filter.row$MonthlyIncome), median(filter.row$MonthlyIncome))) 
+  } else {
+    fill.data <- mean(filter.row$MonthlyIncome)
+  } 
+  
+  return(data.frame(Fila=row$Fila, MonthlyIncome=fill.data))
+}
+
 #Aplicar para todas las filas
-apply(income.nas, 1, )
+monthlyincomes.nas <- sapply(1:nrow(income.nas), function(n){fill.MonthlyIncome(income.nas[n,])})
+
+#Añadimos los valores monthlyincome.nas en el dataset income.nas
+income.nas$MonthlyIncome <- as.integer(round(unlist(monthlyincomes.nas[2,])))
+                                  
+#Valores con NaN que debemos solventar
+income.nas[is.na(income.nas$MonthlyIncome),]
+
+#Al no tener registros con esas edades para filtrar, 
+#vamos a coger todos los registros con age > 90
+filter.age <- income.nas[income.nas$age > 90 & income.nas$age < 105,]$MonthlyIncome
+income.nas[is.na(income.nas$MonthlyIncome),]$MonthlyIncome <- as.integer(round(median(filter.age)))
+
+#Todos los NAs completados
+sum(is.na(income.nas$MonthlyIncome))
+
+#########################################################################
+
+#NumberOfDependents
+
+#Filtramos dataset quitando los NA en esta feature
+dependentens.no.nas <- train.data[!is.na(train.data$NumberOfDependents),]
+dependentens.nas <- train.data[is.na(train.data$NumberOfDependents),]
 
 
-#Para la 1º fila de income.nas
-test <- income.no.nas[income.no.nas$age == eval(income.nas[1,]$age) &
-                      income.no.nas$NumberOfOpenCreditLinesAndLoans == eval(income.nas[1,]$NumberOfOpenCreditLinesAndLoans) &
-                      income.no.nas$NumberRealEstateLoansOrLines == eval(income.nas[1,]$NumberRealEstateLoansOrLines),]
+fill.NumberOfDependents <- function(row){
+  
+  #Filtro income.no.nas con los valores de la fila actual
+  filter.row <- dependentens.no.nas[dependentens.no.nas$age == row$age &
+                                    dependentens.no.nas$NumberOfOpenCreditLinesAndLoans == row$NumberOfOpenCreditLinesAndLoans &
+                                    dependentens.no.nas$NumberRealEstateLoansOrLines == row$NumberRealEstateLoansOrLines,]
+  
+  #En el caso que el filtro no nos de ningun resultado previo, 
+  #filtraremos solo con age que es el valor mas correlado acorde al analisis PCA realizado
+  if(length(filter.row$NumberOfDependents) == 0){
+    filter.row <- dependentens.no.nas[dependentens.no.nas$age == row$age,]
+  }
+  
+  #Devolvemos la mediana
+  fill.data <- median(filter.row$NumberOfDependents)
 
-  
-#Pasamos test de normalidad (Confianza de un 0.5)
-#   SI --> Rellenamos con la media
-#   NO --> Rellenamos con la mediana
-  
-rellenar <- round(ifelse(lillie.test(test$MonthlyIncome)$p.value > 0.05, 
-                           mean(test$MonthlyIncome), median(test$MonthlyIncome)))
-  
-  
-  
+  return(data.frame(Fila=row$Fila, NumberOfDependents=fill.data))
+}
 
-  
-  
-  
-  
-  
-  
-  fill.column <- function(df, df.to.fill, column.to.fill, ...){
-    #Rellena la columna pasada como parametro en base a los valores a filtrar
-    #con los mismos parametros que el dataframe original
-    column.filter <- list(...)
-    
-    #Comprobamos que se cumplen todas las condiciones de column.filter
-    #para la fila que se esta evaluando
-    lapply(column.filter, df$feature == df.to.fill$feature)
-    
-    #Filtramos con dplyr con filter con las condiciones del column.to.fill
-    #Si tenemos datos --> devolvemos el monthlyIncome
-    #No tenemos datos --> devolvemos NA para tratar despues
-    
-    filter(studentdata, Drink == "water")
-    
-    
-    
-    row.to.fill <- df[df$column.filter[1] == ,
-                      df$column.filter[1]]
-    
-  }  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+#Aplicar para todas las filas
+numberofdependentens.nas <- sapply(1:nrow(dependentens.nas), function(n){fill.NumberOfDependents(dependentens.nas[n,])})
 
-#Rellenamos todas las features para aquellos registros que tengan la combinacion
-#de los 3 valores en sus datos
+#Añadimos los valores numberofdependentens.nas en el dataset dependentens.nas
+dependentens.nas$NumberOfDependents <- as.integer(round(unlist(numberofdependentens.nas[2,])))
 
-#En el caso de que no se de esto, seguiremos la escala de porcentajes para rellenar
-#es decir, sobreponderaremos age, luego NumberOfOpenCreditLinesAndLoans y finalmente
-#NumberRealEstateLoansOrLines
+#Valores con NaN que debemos solventar
+dependentens.nas[is.na(dependentens.nas$NumberOfDependents),]
+
+#Al no tener registros con esas edades para filtrar, vamos a coger todos los registros con age > 90
+filter.age <- dependentens.nas[dependentens.nas$age > 90 & dependentens.nas$age < 105,]$NumberOfDependents
+dependentens.nas[is.na(dependentens.nas$NumberOfDependents),]$NumberOfDependents <- as.integer(round(median(filter.age)))
+
+#Todos los NAs completados
+sum(is.na(dependentens.nas$NumberOfDependents))
+
+#########################################################
+
+#Añadimos tanto income.nas como dependentens.nas al dataset de training
+
+train.data[is.na(train.data$MonthlyIncome),]$MonthlyIncome <- income.nas$MonthlyIncome
+train.data[is.na(train.data$NumberOfDependents),]$NumberOfDependents <- dependentens.nas$NumberOfDependents
+
+#Eliminados los NAs en el data set
+sum(is.na(train.data))
+
+########################################
+#########   CREACION MODELO   ##########
+########################################
 
 
 
-all(sort(unique(income.nas$age)) %in% sort(unique(income.no.nas$age)))
-all(unique(income.nas$NumberOfOpenCreditLinesAndLoans) %in% unique(income.no.nas$NumberOfOpenCreditLinesAndLoans))
-all(unique(income.nas$NumberRealEstateLoansOrLines) %in% unique(income.no.nas$NumberRealEstateLoansOrLines))
 
 
 
