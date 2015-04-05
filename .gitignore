@@ -16,3 +16,6 @@ vignettes/*.pdf
 # excel files
 data/*
 submissions/*.csv
+
+#Initial .RData
+.RData
