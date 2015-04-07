@@ -1,16 +1,9 @@
-# PRIMERA VERSION - HACER REFACTOR CODIGO DESPUES
-
 library(ggplot2)
 library(nortest)
 library(modeest)
 library(dplyr)
 library(caret)
-
-########################################
-#####   DECLARACION  FUNCIONES    ######
-########################################
-
-
+library(multilevelPSA)
 
 ########################################
 ##########  CARGA DE DATOS   ###########
@@ -234,18 +227,12 @@ sum(is.na(test.data[,3:12]))
 
 set.seed(1234)
 
-#Ejemplo con 1 arbol nodos para checkear la Max RAM para el arbol con el parametro mas alto
-#MAX ntree posible --> 500
-rf.test <- randomForest(train.data[,3:12], y = train.data$SeriousDlqin2yrs, method = "class",
-                        keep.forest = FALSE, ntree = 200)
+################ CREANDO LAS PARTICIONES DE DATOS
 
-
-################ TRAIN CON CARET
-
-#Elegimos un 20% de la muestra inicial de forma aleatoria por problemas de memoria
-#para llevar a cabo el modelo
-
-split.data <- createFolds(train.data$SeriousDlqin2yrs, list = TRUE, k = 3)
+#Partimos en 3 folds la muestra inicial de forma aleatoria
+#debido a problemas de memoria para llevar a cabo el modelo
+#con todo el train.data entero
+split.data <- createFolds(train.data$SeriousDlqin2yrs, list = TRUE, k = 4)
 partial.training <- train.data[split.data$Fold1,]
 
 #Creamos el sample 80/20
@@ -258,37 +245,93 @@ testing <- partial.training[-inTrain,]
 prop.table(table(training$SeriousDlqin2yrs))
 prop.table(table(testing$SeriousDlqin2yrs))
 
+################ MODELOS CON TODOS LOS ALGORITMOS
+
 #Configuramos el TrainControl
 BootControl <- trainControl(method = 'cv', number = 10, repeats = 3)
 
-#Entrenamiento del modelo
-rf.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, method = 'rf', 
-                trControl = BootControl, tuneLength = 3)
+#Entrenamiento con los diferentes algoritmos
 
+#Naive Bayes
+nb.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                method = 'nb', trControl = BootControl,
+                tuneGrid = expand.grid(.fL=c(0, 1), .usekernel=c(FALSE, TRUE)))
 
-gbm.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, method = 'gbm', 
-                 trControl = BootControl, tuneLength = 20)
+#SVM Lineal - Limitamos a 2 folds por capacidad de memoria
+svm.linear.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                        method='svmLinear', trControl = trainControl(method='cv', number=2, repeats=3),
+                        prob.model=TRUE,
+                        tuneGrid = data.frame(.C=c(1)))
 
-#RESULTADOS
-#Vemos que el mejor modelo es con mtry=2 para randomForest
-#Con gbm --> n.trees = 50, interaction.depth = 3 and shrinkage = 0.1
-#   PASAR EL GRID DE DATOS
+#SVM Polynomial - Limitamos a 2 folds por capacidad de memoria
+svm.poly.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                        method='svmPoly', trControl = trainControl(method='cv', number=2, repeats=3),
+                        prob.model=TRUE,
+                        tuneGrid = data.frame(.degree = c(2), 
+                                              .scale = c(0.10),
+                                              .C = c(8)))
+   
+#SVM Radial - Limitamos a 2 folds por capacidad de memoria
+svm.radial.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                        method='svmRadial', trControl = trainControl(method='cv', number=2, repeats=3),
+                        prob.model=TRUE,
+                        tuneGrid = data.frame(.sigma = c(0.25),
+                                              .C = c(1)))
 
+#Neural network
+nn.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                method='nnet', trControl = BootControl, tuneLength = 10)
 
-#Predecimos test.data
-pred.rf <- predict(rf.fit$finalModel, test.data[,3:12], type = 'prob')
+#Decision trees
+tree.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                  method='C5.0', trControl = BootControl, tuneLength = 5)
 
-pred.gbm <- predict(gbm.fit$finalModel, test.data[,3:12], 
-                    type = 'response', n.trees=gbm.fit$bestTune$n.trees)
+#Random Forest
+rf.fit <- train(x = training[,3:12], y = training$SeriousDlqin2yrs, 
+                method = 'rf', trControl = BootControl, tuneLength = 5)
 
+######################## COMPARACION DE MODELOs
 
-#Guardamos en un csv para el submit con randomForest
-result.rf <- data.frame(Id = 1:nrow(pred.rf) ,Probability = pred.rf[,1])
+#Comparamos los modelos en base al numero de Folds usados en
+#el entrenamiento del modelo
 
-#Guardamos en un csv para el submit con gbm
-result.gbm <- data.frame(Id = 1:length(pred.gbm) ,Probability = pred.gbm)
+resamps <- resamples(list(NB = nb.fit,
+                          NN = nn.fit,
+                          TREE = tree.fit,
+                          RF = rf.fit))
+
+summary(resamps)
+bwplot(resamps)
+
+resamps.svm <- resamples(list(SVM.Linear = svm.linear.fit,
+                              SVM.Polynomial = svm.poly.fit,
+                              SVM.Radial = svm.radial.fit))
+
+summary(resamps.svm)
+bwplot(resamps.svm)
+
+######################## PREDICCION Y VOLCADO PARA SUBMISSION
+
+#Ej con el modelo red neuronal
+bestModel <- nn.fit
+
+#Predecimos test.data para cada uno de los modelos entrenados
+pred <- predict(bestModel$finalModel, test.data[,3:12])
+
+#Guardamos en un csv para el submit
+result <- data.frame(Id = 1:nrow(pred), Probability = pred[,1])
 
 #Volcando datos en fichero
-write.table(result, file = "submissions/sample.submission.6.csv", quote = F,
+write.table(result, file = "submissions/sample.submission.csv", quote = F,
             sep = ",", row.names = FALSE)
+
+####################### RESULTADOS KAGGLE
+
+# Naive Bayes --> 0.795783
+# SVM linear --> 0.771191
+# SVM polynomial --> 0.76370616
+# SVM radial --> 0.6702341
+# Neural network --> 0.853331
+# Decision Tree --> 0.845903
+# randomForest --> 0.840396
 
